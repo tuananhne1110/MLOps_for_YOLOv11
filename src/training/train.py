@@ -60,25 +60,72 @@ def prepare_dataset_config(data_yaml_path: str) -> str:
     
     # Resolve the path if needed
     if "path" in dataset_config and isinstance(dataset_config["path"], str):
-        # Resolve to local path
+        # Get the original path from config
         original_path = dataset_config["path"]
-        local_path = resolve_dvc_path(original_path)
         
-        if str(local_path) != original_path:
-            # Update the configuration to use local path
-            dataset_config["path"] = str(local_path)
+        # Get the datasets directory path
+        datasets_dir = project_root / "data" / "datasets"
+        temp_data_yaml = datasets_dir / "dataset.yaml"
+        
+        # Use DVC to pull data
+        try:
+            # Run DVC pull to get the data
+            import subprocess
+            result = subprocess.run(['dvc', 'pull', '--force'], capture_output=True, text=True)
+            
+            if result.returncode != 0:
+                logging.error(f"DVC pull failed: {result.stderr}")
+                raise RuntimeError("Failed to pull data with DVC")
+            
+            logging.info("Successfully pulled data with DVC")
+            
+            # Remove existing dataset.yaml if it exists
+            if temp_data_yaml.exists():
+                temp_data_yaml.unlink()
+                logging.info(f"Removed existing dataset.yaml at {temp_data_yaml}")
+            
+            # Remove all cache files in all subdirectories
+            for cache_file in datasets_dir.rglob("*.cache"):
+                try:
+                    cache_file.unlink()
+                    logging.info(f"Removed cache file: {cache_file}")
+                except Exception as e:
+                    logging.warning(f"Failed to remove cache file {cache_file}: {e}")
+                    
+            # Also check and remove cache files in train and valid directories
+            for subdir in ['train', 'valid']:
+                subdir_path = datasets_dir / subdir
+                if subdir_path.exists():
+                    for cache_file in subdir_path.glob("*.cache"):
+                        try:
+                            cache_file.unlink()
+                            logging.info(f"Removed cache file from {subdir}: {cache_file}")
+                        except Exception as e:
+                            logging.warning(f"Failed to remove cache file {cache_file}: {e}")
+            
+            # Verify dataset structure
+            train_dir = datasets_dir / "train"
+            valid_dir = datasets_dir / "valid"
+            
+            if not (train_dir / "images").exists() or not (valid_dir / "images").exists():
+                raise FileNotFoundError("Dataset structure is incorrect. Missing train/images or valid/images directories")
+            
+            # Update the configuration to use datasets path
+            dataset_config["path"] = str(datasets_dir)
+            dataset_config["train"] = "train/images"
+            dataset_config["val"] = "valid/images"
             
             # Create a temporary dataset configuration file
-            temp_data_yaml = Path(local_path) / "dataset_resolved.yaml"
             with open(temp_data_yaml, "w") as f:
                 yaml.dump(dataset_config, f, default_flow_style=False)
             
-            logging.info(f"Resolved dataset path {original_path} to {local_path}")
-            
-            # Register cleanup function to run at exit
-            atexit.register(cleanup_dvc)
+            logging.info(f"Dataset configuration updated to use path: {datasets_dir}")
             
             return str(temp_data_yaml)
+            
+        except Exception as e:
+            logging.error(f"Error preparing dataset: {e}")
+            raise
     
     return data_yaml_path
 
@@ -163,14 +210,8 @@ def update_model_version(best_model_path: Path, model_name: str, results: Any) -
         models_dir = project_root / "models"
         models_dir.mkdir(exist_ok=True)
         
-        # Create a backup of the old model if it exists
-        old_model_path = models_dir / f"{model_name}.pt"
-        if old_model_path.exists():
-            backup_path = models_dir / f"{model_name}_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pt"
-            shutil.copy2(old_model_path, backup_path)
-            logging.info(f"Created backup of old model at: {backup_path}")
-        
         # Copy the new best model to replace the old one
+        old_model_path = models_dir / f"{model_name}.pt"
         shutil.copy2(best_model_path, old_model_path)
         logging.info(f"Updated model at: {old_model_path}")
         
@@ -300,8 +341,9 @@ def train_yolov11(config_path: str) -> None:
             "workers": training_config["workers"],
             "patience": training_config["patience"],
             "val": training_config["val"],  # Whether to perform validation
-            "cache": False,  # Force YOLO to regenerate cache files
-            "save": checkpoint_config["save_best"],  # Whether to save best model
+            "cache": "disk",  # Use disk cache instead of RAM
+            "save": True,  # Save best model only
+            "save_period": -1,  # Disable periodic saving
             "project": str(project_root / "runs"),
             "name": mlflow_logger.run_name,
             "exist_ok": True,
@@ -319,11 +361,9 @@ def train_yolov11(config_path: str) -> None:
             "fliplr": training_config["augmentation"]["fliplr"],
             "mosaic": training_config["augmentation"]["mosaic"],
             "mixup": training_config["augmentation"]["mixup"],
+            "rect": False,  # Disable rectangular training
+            "resume": False,  # Disable resume from last checkpoint
         }
-        
-        # Add save_period only if it's enabled
-        if checkpoint_config["save_period"] > 0:
-            args["save_period"] = checkpoint_config["save_period"]
         
         # Log YOLOv11 hyperparameters to MLflow
         mlflow_logger.log_params({"yolo_args": args})
@@ -374,12 +414,30 @@ def train_yolov11(config_path: str) -> None:
                 # Update the model version with results
                 update_model_version(best_model_path, model_name, results)
                 
+                # Upload best model to MinIO
+                s3_client = boto3.client(
+                    's3',
+                    endpoint_url=s3_endpoint,
+                    aws_access_key_id='minioadmin',
+                    aws_secret_access_key='minioadmin'
+                )
+                
+                # Create bucket if it doesn't exist
+                try:
+                    s3_client.head_bucket(Bucket=mlflow_bucket)
+                except:
+                    s3_client.create_bucket(Bucket=mlflow_bucket)
+                
+                # Upload best model to MinIO
+                s3_path = f"{model_name}/best.pt"
+                s3_client.upload_file(str(best_model_path), mlflow_bucket, s3_path)
+                logging.info(f"Best model uploaded to MinIO: {s3_path}")
+                
             except Exception as e:
                 logging.warning(f"Failed to log best model to MLflow: {e}")
                 # Fallback: Copy model to local directory
                 local_model_dir = project_root / "saved_models" / mlflow_logger.run_name
                 local_model_dir.mkdir(parents=True, exist_ok=True)
-                import shutil
                 shutil.copy(best_model_path, local_model_dir)
                 logging.info(f"Best model saved locally to {local_model_dir}")
         
