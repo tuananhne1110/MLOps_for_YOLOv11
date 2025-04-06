@@ -197,8 +197,94 @@ def setup_mlflow_local_storage():
     logging.info(f"MLflow configured to use local storage at {local_artifact_path}")
 
 
+def get_model_versions() -> dict:
+    """Get all model versions from version file.
+    
+    Returns:
+        Dictionary containing all version information
+    """
+    try:
+        version_file = project_root / "models" / "model_version.txt"
+        if not version_file.exists():
+            logging.warning("No version file found")
+            return {}
+            
+        with open(version_file, "r") as f:
+            version_info = yaml.safe_load(f)
+        return version_info
+    except Exception as e:
+        logging.error(f"Error reading version file: {e}")
+        return {}
+
+
+def download_model_from_minio(s3_path: str, local_path: Path) -> bool:
+    """Download model from MinIO.
+    
+    Args:
+        s3_path: S3 path in format s3://bucket/path
+        local_path: Local path to save model
+        
+    Returns:
+        bool: True if successful
+    """
+    try:
+        # Parse S3 path
+        s3_path = s3_path.replace("s3://", "")
+        bucket = s3_path.split("/")[0]
+        key = "/".join(s3_path.split("/")[1:])
+        
+        # Create S3 client
+        s3_client = boto3.client(
+            's3',
+            endpoint_url="http://localhost:9000",
+            aws_access_key_id='minioadmin',
+            aws_secret_access_key='minioadmin'
+        )
+        
+        # Download file
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        s3_client.download_file(bucket, key, str(local_path))
+        logging.info(f"Downloaded model from {s3_path} to {local_path}")
+        return True
+    except Exception as e:
+        logging.error(f"Error downloading model: {e}")
+        return False
+
+
+def rollback_model_version(version: str) -> bool:
+    """Rollback to a specific model version.
+    
+    Args:
+        version: Version timestamp to rollback to
+        
+    Returns:
+        bool: True if successful
+    """
+    try:
+        # Get version info
+        version_info = get_model_versions()
+        if not version_info or version_info["version"] != version:
+            logging.error(f"Version {version} not found")
+            return False
+        
+        # Get S3 path
+        s3_path = version_info["s3_path"]
+        model_name = version_info["model_name"]
+        
+        # Download model to models directory
+        model_path = project_root / "models" / f"{model_name}.pt"
+        if not download_model_from_minio(s3_path, model_path):
+            return False
+        
+        logging.info(f"Successfully rolled back to version {version}")
+        return True
+    except Exception as e:
+        logging.error(f"Error rolling back version: {e}")
+        return False
+
+
 def update_model_version(best_model_path: Path, model_name: str, results: Any) -> None:
-    """Update the model version after successful training.
+    """Update the model version information.
     
     Args:
         best_model_path: Path to the best model file
@@ -210,17 +296,16 @@ def update_model_version(best_model_path: Path, model_name: str, results: Any) -
         models_dir = project_root / "models"
         models_dir.mkdir(exist_ok=True)
         
-        # Copy the new best model to replace the old one
-        old_model_path = models_dir / f"{model_name}.pt"
-        shutil.copy2(best_model_path, old_model_path)
-        logging.info(f"Updated model at: {old_model_path}")
+        # Get current version info
+        current_version = get_model_versions()
         
-        # Update the model version in a version file
-        version_file = models_dir / "model_version.txt"
+        # Create new version info
+        new_version = datetime.now().strftime("%Y%m%d_%H%M%S")
         version_info = {
             "model_name": model_name,
-            "version": datetime.now().strftime("%Y%m%d_%H%M%S"),
-            "path": str(old_model_path),
+            "version": new_version,
+            "s3_path": f"s3://{mlflow_bucket}/{model_name}/versions/{new_version}/model.pt",  # Include version in path
+            "previous_version": current_version.get("version") if current_version else None,
             "metrics": {
                 "mAP50": results.results_dict["metrics/mAP50(B)"],
                 "mAP50-95": results.results_dict["metrics/mAP50-95(B)"],
@@ -230,9 +315,28 @@ def update_model_version(best_model_path: Path, model_name: str, results: Any) -
             }
         }
         
+        # Save version info
+        version_file = models_dir / "model_version.txt"
         with open(version_file, "w") as f:
             yaml.dump(version_info, f, default_flow_style=False)
         logging.info(f"Updated model version info at: {version_file}")
+        
+        # Upload model to versioned path in MinIO
+        s3_client = boto3.client(
+            's3',
+            endpoint_url="http://localhost:9000",
+            aws_access_key_id='minioadmin',
+            aws_secret_access_key='minioadmin'
+        )
+        
+        s3_path = f"{model_name}/versions/{new_version}/model.pt"
+        s3_client.upload_file(str(best_model_path), mlflow_bucket, s3_path)
+        logging.info(f"Uploaded model to versioned path: {s3_path}")
+        
+        # Also update best.pt for latest version
+        latest_path = f"{model_name}/best.pt"
+        s3_client.upload_file(str(best_model_path), mlflow_bucket, latest_path)
+        logging.info(f"Updated latest model at: {latest_path}")
         
     except Exception as e:
         logging.error(f"Error updating model version: {e}")
