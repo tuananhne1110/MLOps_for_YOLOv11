@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-"""Script to export trained YOLOv11 model to different formats."""
 import os
 import sys
 import argparse
@@ -8,11 +6,14 @@ import warnings
 from pathlib import Path
 from typing import Union, List
 from copy import deepcopy
+from datetime import datetime
+import shutil
 
 import mlflow
 import torch
 import torch.nn as nn
 import onnx
+import boto3
 from ultralytics import YOLO
 from ultralytics.nn.modules import C2f, Detect, RTDETRDecoder
 from ultralytics.utils.torch_utils import select_device
@@ -34,6 +35,78 @@ def suppress_warnings():
     warnings.filterwarnings("ignore", category=torch.jit.TracerWarning)
     warnings.filterwarnings("ignore", category=UserWarning)
     warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+def get_model_version_name(model_path: str, format: str) -> str:
+    """Generate a versioned name for the exported model.
+    
+    Args:
+        model_path: Path to model weights
+        format: Export format
+    
+    Returns:
+        Versioned model name
+    """
+    # Get model base name
+    base_name = os.path.basename(model_path).split(".pt")[0]
+    
+    # Add timestamp for versioning
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Construct version name
+    version_name = f"{base_name}_{timestamp}_{format}"
+    
+    return version_name
+
+def upload_to_minio(
+    file_path: str,
+    bucket_name: str = "models",
+    version_name: str = None,
+    endpoint_url: str = "http://localhost:9000",
+    access_key: str = "minioadmin",
+    secret_key: str = "minioadmin"
+) -> str:
+    """Upload file to MinIO.
+    
+    Args:
+        file_path: Path to file to upload
+        bucket_name: MinIO bucket name
+        version_name: Version name for the file
+        endpoint_url: MinIO endpoint URL
+        access_key: MinIO access key
+        secret_key: MinIO secret key
+    
+    Returns:
+        S3 path of uploaded file
+    """
+    try:
+        # Initialize MinIO client
+        s3_client = boto3.client(
+            's3',
+            endpoint_url=endpoint_url,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key
+        )
+        
+        # Create bucket if it doesn't exist
+        try:
+            s3_client.head_bucket(Bucket=bucket_name)
+        except:
+            s3_client.create_bucket(Bucket=bucket_name)
+        
+        # Generate S3 path
+        if version_name is None:
+            version_name = os.path.basename(file_path)
+        s3_path = f"{version_name}"
+        
+        # Upload file
+        s3_client.upload_file(file_path, bucket_name, s3_path)
+        logging.info(f"Uploaded {file_path} to MinIO: s3://{bucket_name}/{s3_path}")
+        
+        return f"s3://{bucket_name}/{s3_path}"
+    
+    except Exception as e:
+        logging.error(f"Failed to upload to MinIO: {e}")
+        return None
 
 class DeepStreamOutput(nn.Module):
     """DeepStream output layer for YOLOv11."""
@@ -160,28 +233,64 @@ def export_model(run_id: str, format: str = "onnx", half: bool = True, deepstrea
     model_uri = f"runs:/{run_id}/best_model"
     local_path = mlflow.artifacts.download_artifacts(run_id=run_id, artifact_path="best_model")
     
-    if deepstream:
-        # Export in DeepStream format
-        output_file = export_deepstream(
-            local_path,
-            img_size=[640],
-            batch_size=1,
-            dynamic=True,
-            opset=16,
-            simplify=True,
-        )
-        logging.info(f"Model exported successfully to {output_file}")
-    else:
-        # Load model and export in standard format
-        model = YOLO(local_path)
-        logging.info(f"Exporting model to {format} format...")
-        model.export(
-            format=format,
-            half=half,
-            dynamic=True,
-            simplify=True,
-        )
-        logging.info(f"Model exported successfully to {model.export_dir}")
+    try:
+        if deepstream:
+            # Export in DeepStream format
+            output_file = export_deepstream(
+                local_path,
+                img_size=[640],
+                batch_size=1,
+                dynamic=True,
+                opset=16,
+                simplify=True,
+            )
+            # Generate version name
+            version_name = get_model_version_name(local_path, "deepstream")
+            
+            # Upload to MinIO
+            s3_path = upload_to_minio(output_file, version_name=version_name)
+            if s3_path:
+                # Remove local file
+                os.remove(output_file)
+                logging.info(f"Removed local file: {output_file}")
+            
+        else:
+            # Load model and export in standard format
+            model = YOLO(local_path)
+            logging.info(f"Exporting model to {format} format...")
+            model.export(
+                format=format,
+                half=half,
+                dynamic=True,
+                simplify=True,
+            )
+            
+            # Get exported model path
+            export_path = Path(model.export_dir) / f"best.{format}"
+            if export_path.exists():
+                # Generate version name
+                version_name = get_model_version_name(local_path, format)
+                
+                # Upload to MinIO
+                s3_path = upload_to_minio(str(export_path), version_name=version_name)
+                if s3_path:
+                    # Remove local files
+                    shutil.rmtree(model.export_dir)
+                    logging.info(f"Removed local directory: {model.export_dir}")
+            
+        # Remove downloaded MLflow artifacts
+        if os.path.exists(local_path):
+            os.remove(local_path)
+            logging.info(f"Removed local MLflow artifacts: {local_path}")
+            
+        logging.info("Model export completed successfully")
+        
+    except Exception as e:
+        logging.error(f"Error exporting model: {e}")
+        # Clean up local files in case of error
+        if os.path.exists(local_path):
+            os.remove(local_path)
+        sys.exit(1)
 
 def main():
     parser = argparse.ArgumentParser(description="Export YOLOv11 model to different formats")
