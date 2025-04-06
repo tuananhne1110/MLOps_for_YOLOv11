@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-"""Script to manage dataset versions and updates."""
 import os
 import sys
 import argparse
@@ -280,6 +278,12 @@ def update_dataset(
             with open(yaml_path) as f:
                 yaml_data = yaml.safe_load(f)
             
+            # Save a copy of this version's dataset yaml within the dataset dir to be tracked by DVC
+            version_yaml_path = dataset_dir / f"dataset_v{output_version or 'latest'}.yaml"
+            with open(version_yaml_path, "w") as f:
+                yaml.dump(yaml_data, f)
+            logging.info(f"Created version-specific dataset YAML at: {version_yaml_path}")
+            
             # Get current classes
             current_classes = yaml_data.get("names", {})
             
@@ -512,6 +516,70 @@ def check_version(dataset_path: str) -> bool:
     
     return True
 
+
+def switch_version(dataset_path: str, target_version: str) -> bool:
+    """Switch to a different dataset version.
+    
+    Args:
+        dataset_path: Path to dataset directory
+        target_version: Version to switch to
+        
+    Returns:
+        bool: True if successful
+    """
+    logging.info(f"Switching dataset to version: {target_version}")
+    
+    dataset_dir = Path(dataset_path)
+    if not dataset_dir.exists():
+        logging.error(f"Dataset directory not found: {dataset_dir}")
+        return False
+    
+    # Get Git commit hash for this version
+    logging.info(f"Looking for Git commit with version tag: {target_version}")
+    result = subprocess.run(
+        f'git log --grep="version {target_version}" --format="%H" -n 1',
+        shell=True,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+    
+    commit_hash = result.stdout.strip()
+    if not commit_hash:
+        logging.error(f"Could not find Git commit for version {target_version}")
+        return False
+    
+    logging.info(f"Found commit hash: {commit_hash}")
+    
+    # Checkout the Git version
+    if not run_command(f"git checkout {commit_hash}"):
+        logging.error(f"Failed to checkout Git commit {commit_hash}")
+        return False
+    
+    # Checkout the DVC version
+    if not run_command("dvc checkout"):
+        logging.error("Failed to checkout DVC data")
+        return False
+    
+    # Check if there's a version-specific dataset.yaml file
+    version_yaml_path = dataset_dir / f"dataset_v{target_version}.yaml"
+    main_yaml_path = dataset_dir / "dataset.yaml"
+    
+    if version_yaml_path.exists():
+        logging.info(f"Found version-specific dataset YAML at: {version_yaml_path}")
+        import yaml
+        with open(version_yaml_path) as f:
+            yaml_data = yaml.safe_load(f)
+        
+        # Update the main dataset.yaml
+        with open(main_yaml_path, "w") as f:
+            yaml.dump(yaml_data, f)
+        logging.info(f"Updated main dataset.yaml with version {target_version} classes")
+    
+    logging.info(f"Successfully switched to dataset version: {target_version}")
+    return True
+
 def main():
     """Main function to handle dataset management."""
     parser = argparse.ArgumentParser(description="Manage dataset versions and updates")
@@ -551,6 +619,11 @@ def main():
         "--remote-url",
         help="Remote URL for DVC storage"
     )
+
+    parser.add_argument(
+        "--target-version",
+        help="Target version to switch to (required for switch action)"
+    )
     
     args = parser.parse_args()
     setup_logging()
@@ -582,5 +655,12 @@ def main():
         if not check_version(args.dataset_path):
             sys.exit(1)
 
+    elif args.action == "switch":
+        if not args.target_version:
+            logging.error("--target-version is required for switch action")
+            sys.exit(1)
+        if not switch_version(args.dataset_path, args.target_version):
+            sys.exit(1)
+            
 if __name__ == "__main__":
     main() 
