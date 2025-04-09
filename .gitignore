@@ -35,7 +35,6 @@ ENV/
 *.sublime-project
 
 # DVC and data
-data/
 data/dvc_repo
 data/datasets/*
 !data/datasets/.gitkeep

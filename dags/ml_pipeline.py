@@ -216,20 +216,37 @@ wait_for_mlflow = PythonOperator(
     dag=dag
 )
 
+pull_data = BashOperator(
+    task_id='pull_data',
+    bash_command='''
+        cd /opt/airflow/workspace/gfas && \
+        . venv/bin/activate && \
+        # Check if data has changed on remote
+        if dvc status | grep -q "changed"; then
+            echo "DVC changes detected, pulling new data..."
+            dvc pull --force
+        else
+            echo "No DVC changes detected, skipping training..."
+            exit 0  # Exit with success to stop the pipeline
+        fi
+    ''',
+    dag=dag
+)
+
 train_model = BashOperator(
     task_id='train_model',
     bash_command='''
-        cd /opt/airflow/workspace/gfas && 
-        . venv/bin/activate && 
+        cd /opt/airflow/workspace/gfas && \
+        . venv/bin/activate && \
         # Set environment variables for MLflow and MinIO
-        export MLFLOW_TRACKING_URI=http://localhost:5000 && 
-        export MLFLOW_S3_ENDPOINT_URL=http://localhost:9000 && 
-        export AWS_ACCESS_KEY_ID=minioadmin && 
-        export AWS_SECRET_ACCESS_KEY=minioadmin && 
+        export MLFLOW_TRACKING_URI=http://localhost:5000 && \
+        export MLFLOW_S3_ENDPOINT_URL=http://localhost:9000 && \
+        export AWS_ACCESS_KEY_ID=minioadmin && \
+        export AWS_SECRET_ACCESS_KEY=minioadmin && \
         python yolov11_mlflow/scripts/pipeline.py
     ''',
     dag=dag
 )
 
 # Set task dependencies
-checkout >> configure_dvc >> start_mlflow >> wait_for_mlflow >> train_model 
+checkout >> setup_env >> configure_dvc >> start_mlflow >> wait_for_mlflow >> pull_data >> train_model 

@@ -1,0 +1,16 @@
+names:
+  0: butter_sugar_bread
+  1: chicken_floss_bread
+  2: chicken_floss_sandwich
+  3: cream_puf
+  4: croissant
+  5: donut
+  6: muffin
+  7: salted_egg_sponge_cake
+  8: sandwich
+  9: sponge_cake
+  10: tiramisu
+path: /mnt/d/Workspace/DishScan/yolov11_mlflow/data
+test: test/images
+train: train/images
+val: valid/images
