@@ -31,7 +31,7 @@ training:
 
 # Dataset configuration
 dataset:
-  data_yaml: "data/datasets/dataset.yaml"  # Path to dataset YAML file
+  data_yaml: "../data/datasets/dataset.yaml"  # Path to dataset YAML file
   cache: False  # Cache images for faster training
 
 # MLflow configuration
