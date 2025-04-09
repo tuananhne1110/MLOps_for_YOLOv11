@@ -221,13 +221,20 @@ pull_data = BashOperator(
     bash_command='''
         cd /opt/airflow/workspace/gfas && \
         . venv/bin/activate && \
-        # Check if data has changed on remote
-        if dvc status | grep -q "changed"; then
-            echo "DVC changes detected, pulling new data..."
-            dvc pull --force
+        
+        # Check if datasets.dvc exists and has changes
+        if [ ! -f "data/datasets.dvc" ]; then
+            echo "datasets.dvc not found. Please add data to DVC first."
+            exit 1
+        fi
+        
+        # Check for changes in datasets.dvc
+        if dvc status data/datasets.dvc | grep -q "changed"; then
+            echo "Changes detected in datasets.dvc, pulling data..."
+            dvc pull data/datasets.dvc --force
         else
-            echo "No DVC changes detected, skipping training..."
-            exit 0  # Exit with success to stop the pipeline
+            echo "No changes in datasets.dvc, skipping training..."
+            exit 0
         fi
     ''',
     dag=dag
