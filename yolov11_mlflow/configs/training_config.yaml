@@ -1,6 +1,6 @@
 # Training configuration
 training:
-  model_name: yolov11n  # Options: yolov11n, yolov11s, yolov11m, yolov11l, yolov11x
+  model_name: yolo11n  # Options: yolov11n, yolov11s, yolov11m, yolov11l, yolov11x
   batch_size: 4
   epochs: 1
   img_size: 640
