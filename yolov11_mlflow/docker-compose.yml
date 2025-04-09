@@ -1,0 +1,101 @@
+version: '3.3'
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: mlflow-postgres
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-mlflow}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - mlflow-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  minio:
+    image: minio/minio:latest
+    container_name: mlflow-minio
+    environment:
+      - MINIO_ROOT_USER=${AWS_ACCESS_KEY_ID:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${AWS_SECRET_ACCESS_KEY:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - mlflow-network
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:latest
+    container_name: mlflow-server
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-minioadmin}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-minioadmin}
+      - MLFLOW_S3_IGNORE_TLS=true
+      - MLFLOW_S3_BUCKET_NAME=mlflow
+      - MLFLOW_DEFAULT_ARTIFACT_ROOT=s3://mlflow/
+      - MLFLOW_ARTIFACT_ROOT=s3://mlflow/
+    ports:
+      - "5000:5000"
+    networks:
+      - mlflow-network
+    command: >
+      sh -c "
+      pip install psycopg2-binary boto3 &&
+      echo 'PostgreSQL is ready, starting MLflow server...' &&
+      mlflow server 
+      --host 0.0.0.0 
+      --port 5000 
+      --backend-store-uri postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-mlflow} 
+      --default-artifact-root s3://mlflow/ 
+      --artifacts-destination s3://mlflow/
+      "
+
+  createbuckets:
+    image: minio/mc
+    container_name: minio-createbuckets
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - mlflow-network
+    command: >
+      sh -c "
+      sleep 5;
+      /usr/bin/mc config host add myminio http://minio:9000 ${AWS_ACCESS_KEY_ID:-minioadmin} ${AWS_SECRET_ACCESS_KEY:-minioadmin};
+      /usr/bin/mc mb myminio/dvc;
+      /usr/bin/mc mb myminio/mlflow;
+      /usr/bin/mc policy set download myminio/dvc;
+      /usr/bin/mc policy set download myminio/mlflow;
+      exit 0;
+      "
+
+networks:
+  mlflow-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  minio_data: 

@@ -1,0 +1,49 @@
+# Training configuration
+training:
+  model_name: yolov11n  # Options: yolov11n, yolov11s, yolov11m, yolov11l, yolov11x
+  batch_size: 4
+  epochs: 1
+  img_size: 640
+  patience: 50
+  workers: 4
+  device: 0  # GPU device id, 'cpu' for CPU
+  val: true  # Whether to perform validation
+  
+  # Optimizer settings
+  optimizer:
+    name: AdamW  # Options: SGD, Adam, AdamW
+    lr: 0.001
+    weight_decay: 0.0005
+    
+  # Data augmentation
+  augmentation:
+    hsv_h: 0.0  # HSV-Hue augmentation
+    hsv_s: 0.0   # HSV-Saturation augmentation
+    hsv_v: 0.0    # HSV-Value augmentation
+    degrees: 0.0  # Rotation degrees
+    translate: 0.0  # Translation
+    scale: 0.0     # Scale
+    shear: 0.0     # Shear
+    flipud: 0.0    # Flip up-down
+    fliplr: 0.0    # Flip left-right
+    mosaic: 0.0    # Mosaic augmentation
+    mixup: 0.0     # Mixup augmentation
+
+# Dataset configuration
+dataset:
+  data_yaml: "data/datasets/dataset.yaml"  # Path to dataset YAML file
+  cache: False  # Cache images for faster training
+
+# MLflow configuration
+mlflow:
+  experiment_name: "yolo11n-training"
+  run_name: null  # Will be auto-generated if null
+  tags:
+    version: "v1.0"
+    framework: "ultralytics"
+    model: "yolo11"
+    
+# Checkpoint configuration
+checkpoint:
+  save_best: True
+  save_period: 10  # Save checkpoint every n epochs 
