@@ -129,6 +129,7 @@ setup_env = BashOperator(
     task_id='setup_environment',
     bash_command='''
         cd /opt/airflow/workspace/gfas && \
+        # Create and setup virtual environment
         if [ ! -d "venv" ]; then
             python -m venv venv && \
             . venv/bin/activate && \
@@ -139,7 +140,34 @@ setup_env = BashOperator(
                 pip install -r requirements.txt && \
                 touch venv/.requirements_installed
             fi
-        fi
+        fi && \
+        # Create .env file with necessary configurations
+        echo "# MLflow Configuration
+MLFLOW_TRACKING_URI=http://localhost:5000
+MLFLOW_S3_ENDPOINT_URL=http://localhost:9000
+AWS_ACCESS_KEY_ID=minioadmin
+AWS_SECRET_ACCESS_KEY=minioadmin
+
+# MinIO Configuration
+MINIO_ROOT_USER=minioadmin
+MINIO_ROOT_PASSWORD=minioadmin
+
+# MLflow Experiment Settings
+MLFLOW_EXPERIMENT_NAME=yolov11-training-new
+MLFLOW_S3_BUCKET_NAME=mlflow
+
+# DVC Settings
+DVC_REMOTE_NAME=dvc
+DVC_REMOTE_URL=s3://dvc
+DVC_S3_ENDPOINT_URL=http://localhost:9000
+
+# Database settings
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=mlflow
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432" > yolov11_mlflow/.env && \
+        cp yolov11_mlflow/.env .env
     ''',
     dag=dag
 )
