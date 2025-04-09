@@ -192,7 +192,7 @@ def create_new_dataset(dataset_path: str, dataset_name: str, output_version: Opt
     
     # Create dataset.yaml in the parent directory
     yaml_content = f"""
-path: .  # dataset root dir
+path: {dataset_path}  # dataset root dir
 train: train/images  # train images (relative to 'path')
 val: valid/images    # val images (relative to 'path')
 test: test/images    # test images (relative to 'path')
