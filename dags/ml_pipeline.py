@@ -166,14 +166,12 @@ configure_dvc = BashOperator(
         if [ ! -d .dvc ]; then
             dvc init --no-scm
         fi
-        # Add minio remote if not exists
-        if ! dvc remote list | grep -q minio; then
-            dvc remote add -d minio s3://dvc
-        fi
-        # Configure MinIO endpoint and credentials
-        dvc remote modify minio endpointurl http://localhost:9000
-        dvc remote modify minio access_key_id minioadmin
-        dvc remote modify minio secret_access_key minioadmin
+        # Add and configure minio remote
+        dvc remote remove minio || true && \
+        dvc remote add -d minio s3://dvc && \
+        dvc remote modify minio endpointurl http://localhost:9000 && \
+        dvc remote modify --local minio access_key_id minioadmin && \
+        dvc remote modify --local minio secret_access_key minioadmin
     ''',
     dag=dag
 )
@@ -206,4 +204,4 @@ train_model = BashOperator(
 )
 
 # Set task dependencies
-checkout >> start_mlflow >> wait_for_mlflow >> train_model 
+checkout >> configure_dvc >> start_mlflow >> wait_for_mlflow >> train_model 
