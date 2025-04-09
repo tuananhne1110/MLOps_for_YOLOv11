@@ -167,11 +167,11 @@ configure_dvc = BashOperator(
             dvc init --no-scm
         fi
         # Add and configure minio remote
-        dvc remote remove minio || true && \
-        dvc remote add -d minio s3://dvc && \
-        dvc remote modify minio endpointurl http://localhost:9000 && \
-        dvc remote modify --local minio access_key_id minioadmin && \
-        dvc remote modify --local minio secret_access_key minioadmin
+        dvc remote list | grep -q "minio" || dvc remote add -d minio s3://dvc
+        dvc remote modify minio endpointurl http://localhost:9000
+        dvc remote modify --local minio access_key_id {{ var.value.MINIO_ACCESS_KEY }}
+        dvc remote modify --local minio secret_access_key {{ var.value.MINIO_SECRET_KEY }}
+        touch .dvc/.credentials_configured
     ''',
     dag=dag
 )
