@@ -117,9 +117,16 @@ checkout = BashOperator(
         if [ -d "/opt/airflow/workspace/gfas" ]; then
             cd /opt/airflow/workspace/gfas && \
             git fetch && \
-            git reset --hard origin/main
+            # Check if there are differences
+            if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+                echo "Changes detected, updating repository..."
+                git reset --hard origin/main
+            else
+                echo "No changes detected, skipping pipeline..."
+                exit 0
+            fi
         else
-            git clone --depth 1 https://github.com/tuananhne1110/gfas.git /opt/airflow/workspace/gfas
+            git clone --depth 1 https://github.com/tuananhne1110/MLOps_for_YOLOv11.git /opt/airflow/workspace/gfas
         fi
     ''',
     dag=dag
