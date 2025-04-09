@@ -237,7 +237,7 @@ names:
     
     # Push to GitHub
     logging.info("Pushing to GitHub...")
-    if not run_command("git push origin main"):
+    if not run_command("git push"):
         logging.error("Failed to push to GitHub")
         return False
     
@@ -419,7 +419,7 @@ def update_dataset(
     
     # Push to GitHub
     logging.info("Pushing to GitHub...")
-    if not run_command("git push origin main"):
+    if not run_command("git push"):
         logging.error("Failed to push to GitHub")
         return False
     
