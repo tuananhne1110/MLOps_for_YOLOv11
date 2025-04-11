@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+
 """Script to export trained YOLOv11 model to TensorRT engine format."""
 import os
 import sys
