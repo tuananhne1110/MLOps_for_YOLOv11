@@ -1,5 +1,3 @@
-
-"""Script to manage dataset versions and updates."""
 import os
 import sys
 import argparse
