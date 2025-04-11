@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+
 """Script to manage dataset versions and updates."""
 import os
 import sys
