@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-"""Script to validate dataset structure and format."""
 import os
 import sys
 import argparse
