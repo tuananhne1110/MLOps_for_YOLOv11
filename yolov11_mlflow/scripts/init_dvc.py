@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-"""Initialize DVC repository and set up directories."""
-
 import os
 import sys
 import argparse
