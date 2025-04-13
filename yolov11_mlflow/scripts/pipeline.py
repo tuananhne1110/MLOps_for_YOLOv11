@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-"""Main pipeline script for automating the entire training workflow."""
 import os
 import sys
 import logging
