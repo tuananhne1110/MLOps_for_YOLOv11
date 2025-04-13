@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-"""Script to start MLflow and related services."""
 import os
 import sys
 import time
